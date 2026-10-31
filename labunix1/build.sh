@@ -35,6 +35,8 @@ trap cleanup EXIT HUP INT QUIT PIPE TERM ALRM USR1 USR2
 
 cp -- "$srcfile" "$BUILD_TMPDIR/"
 
+ORIG_DIR=$(pwd)
+
 case "$srcbase" in
     *.c)
         if ! cc -o "$BUILD_TMPDIR/$outname" "$BUILD_TMPDIR/$srcbase" 2>"$BUILD_TMPDIR/build.log"; then
@@ -49,12 +51,18 @@ case "$srcbase" in
         fi
         ;;
     *.tex)
+        cd -- "$BUILD_TMPDIR" || { echo "Ошибка: не удалось войти во временный каталог" >&2; exit 1; }
+        
         jobname="${outname%.pdf}"
         if ! pdflatex -interaction=nonstopmode -halt-on-error \
-                -output-directory "$BUILD_TMPDIR" -jobname="$jobname" "$BUILD_TMPDIR/$srcbase" >"$BUILD_TMPDIR/build.log" 2>&1; then
-            cat -- "$BUILD_TMPDIR/build.log" >&2
+                -jobname="$jobname" "$srcbase" >build.log 2>&1; then
+            cat -- build.log >&2
+            cd -- "$ORIG_DIR" || true
             exit 4
         fi
+        
+        cd -- "$ORIG_DIR" || true
+        
         if [ ! -s "$BUILD_TMPDIR/$jobname.pdf" ]; then
             echo "Ошибка: pdflatex отработал, но PDF файл не был создан" >&2
             exit 4
