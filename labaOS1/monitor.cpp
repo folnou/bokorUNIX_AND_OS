@@ -9,9 +9,10 @@
 class Event {
 public:
     Event(int id, std::size_t payloadSize)
-        : id_(id), payload_(payloadSize, 3.14) {}
+        : id_(id), payload_(payloadSize, 3.14) {
+    }
 
-    Event(const Event&) = delete;            
+    Event(const Event&) = delete;
     Event& operator=(const Event&) = delete;
 
     int id() const { return id_; }
@@ -19,55 +20,68 @@ public:
 
 private:
     int id_;
-    std::vector<double> payload_;            
+    std::vector<double> payload_;
 };
 class Monitor {
 public:
     bool provide(std::unique_ptr<Event> e) {
-        std::lock_guard<std::mutex> lock(mtx_);         
-
-        if (ready_) {                                    
-            std::cout << "[поставщик]  событие #" << e->id()
-                      << " пропущено: предыдущее ещё не обработано"
-                      << std::endl;                      
-            return false;                                
-        }
         const int id = e->id();
-        data_ = std::move(e);                           
-        ready_ = true;                                   
-        std::cout << "[поставщик]  событие #" << id
-                  << " отправлено" << std::endl;         
-        cv_.notify_one();                               
-        return true;
-    }                                                  
+        bool accepted;
+
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            if (ready_) {
+                accepted = false;
+            }
+            else {
+                data_ = std::move(e);
+                ready_ = true;
+                accepted = true;
+            }
+        }
+        if (accepted) {
+            std::cout << "[поставщик]  событие #" << id
+                << " отправлено" << std::endl;
+            cv_.notify_one();
+        }
+        else {
+            std::cout << "[поставщик]  событие #" << id
+                << " пропущено: предыдущее ещё не обработано"
+                << std::endl;
+        }
+        return accepted;
+    }
     std::unique_ptr<Event> consume() {
-        std::unique_lock<std::mutex> lock(mtx_);         
-        cv_.wait(lock, [this] { return ready_ || stopping_; });
+        std::unique_ptr<Event> e;
 
-        if (!ready_)                                  
-            return nullptr;
+        {
+            std::unique_lock<std::mutex> lock(mtx_);
+            cv_.wait(lock, [this] { return ready_ || stopping_; });
+            if (!ready_)
+                return nullptr;
+            e = std::move(data_);
+            ready_ = false;
+        }
 
-        std::unique_ptr<Event> e = std::move(data_);     
-        ready_ = false;                                  
         std::cout << "[потребитель] событие #" << e->id()
-                  << " получено (полезная нагрузка: " << e->size()
-                  << " элементов)" << std::endl;         
-        return e;                                        
+            << " получено (полезная нагрузка: " << e->size()
+            << " элементов)" << std::endl;
+        return e;
     }
     void stop() {
-        std::lock_guard<std::mutex> lock(mtx_);
-        stopping_ = true;
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            stopping_ = true;
+        }
         cv_.notify_all();
     }
-
 private:
-    std::mutex mtx_;                    
-    std::condition_variable cv_;        
-    bool ready_ = false;                
-    bool stopping_ = false;             
-    std::unique_ptr<Event> data_;       
+    std::mutex mtx_;
+    std::condition_variable cv_;
+    bool ready_ = false;
+    bool stopping_ = false;
+    std::unique_ptr<Event> data_;
 };
-
 class Producer {
 public:
     Producer(Monitor& m, int count) : monitor_(m), count_(count) {}
@@ -77,12 +91,11 @@ public:
             std::this_thread::sleep_for(std::chrono::seconds(1));
             monitor_.provide(std::make_unique<Event>(id, 1'000'000));
         }
-        monitor_.stop();               
+        monitor_.stop();
     }
-
 private:
     Monitor& monitor_;
-    int count_;                      
+    int count_;
 };
 class Consumer {
 public:
@@ -96,7 +109,7 @@ private:
     Monitor& monitor_;
 };
 int main(int argc, char* argv[]) {
-    int count = (argc > 1) ? std::atoi(argv[1]) : 0;    
+    int count = (argc > 1) ? std::atoi(argv[1]) : 0;
     Monitor monitor;
     Producer producer(monitor, count);
     Consumer consumer(monitor);
